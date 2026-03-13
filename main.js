@@ -471,7 +471,7 @@
             var latestEng  = last(engData);
             var fuelPct = latestFuel ? Math.round(latestFuel.data) + '%' : '--';
             var defPct  = latestDef  ? Math.round(latestDef.data)  + '%' : '--';
-            var engineHrs = latestEng ? +latestEng.data.toFixed(1) : '--';
+            var engineHrs = latestEng ? +(latestEng.data / 3600).toFixed(1) : '--';
 
             rows.push({
                 truck: { id: d.id, name: d.name, sensorOk: hasSensor },
@@ -541,8 +541,8 @@
             if (tF < 0) tF = 0; // ECM reset guard
 
             // ── Engine hours delta ──
-            var engStart = engStartRec ? engStartRec.data : 0;
-            var engEnd   = engEndRec   ? engEndRec.data   : engStart;
+            var engStart = engStartRec ? engStartRec.data / 3600 : 0;
+            var engEnd   = engEndRec   ? engEndRec.data / 3600   : engStart;
             var tEH = +(engEnd - engStart).toFixed(1);
             if (tEH < 0) tEH = 0; // ECM reset guard
 
@@ -650,8 +650,8 @@
 
             // Engine hours delta for this slot
             var slotEng = filterByTime(engData, ssMs, seMs);
-            var eStart = slotEng.length ? slotEng[0].data : 0;
-            var eEnd   = slotEng.length ? slotEng[slotEng.length - 1].data : eStart;
+            var eStart = slotEng.length ? slotEng[0].data / 3600 : 0;
+            var eEnd   = slotEng.length ? slotEng[slotEng.length - 1].data / 3600 : eStart;
             var engH = +(eEnd - eStart).toFixed(1);
             if (engH < 0) engH = 0;
 
