@@ -1,0 +1,20 @@
+{
+  "name": "FleetSource Spotter IQ",
+  "supportEmail": "support@fleetsource.io",
+  "version": "3.9.0",
+  "items": [
+    {
+      "url": "index.html",
+      "path": "ActivityLink",
+      "menuName": {
+        "en": "Spotter IQ"
+      },
+      "icon": "https://fleetsource.io/assets/spotter-iq-icon.svg"
+    }
+  ],
+  "isSigned": false,
+  "files": {
+    "js": ["main.js"],
+    "css": ["style.css"]
+  }
+}

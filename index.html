@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FleetSource Spotter IQ</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <!-- ═══ SVG DEFS: Diagonal hatch for RPM-Only fallback ═══ -->
+    <svg width="0" height="0" style="position:absolute">
+        <defs>
+            <pattern id="hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+                <rect width="6" height="6" fill="#d1d5db"/>
+                <line x1="0" y1="0" x2="0" y2="6" stroke="#9ca3af" stroke-width="2"/>
+            </pattern>
+        </defs>
+    </svg>
+
+    <!-- ═══ TOOLTIP (single reusable element, positioned by JS) ═══ -->
+    <div id="tooltip" class="tooltip" role="tooltip"></div>
+
+    <!-- ═══ HEADER ═══ -->
+    <header class="header">
+        <div class="header__brand">
+            <div class="header__logo">FS:IQ</div>
+            <div class="header__text">
+                <div class="header__title">FleetSource Spotter IQ</div>
+                <div class="header__leaf" id="leafGroupName">Loading…</div>
+            </div>
+        </div>
+        <div class="header__version">v3.9</div>
+    </header>
+
+    <!-- ═══ TAB BAR ═══ -->
+    <nav class="tab-bar">
+        <button class="tab-bar__btn tab-bar__btn--active" data-tab="live" id="tabLive">
+            <span class="tab-bar__label">Live Dispatcher</span>
+            <span class="tab-bar__sub">Real-time fleet state</span>
+        </button>
+        <button class="tab-bar__btn" data-tab="audit" id="tabAudit">
+            <span class="tab-bar__label">Historical Audit</span>
+            <span class="tab-bar__sub">Performance &amp; fuel review</span>
+        </button>
+    </nav>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         TAB 1: LIVE DISPATCHER
+         ═══════════════════════════════════════════════════════════ -->
+    <section id="viewLive" class="view">
+
+        <!-- Shift Selector -->
+        <div class="shift-bar">
+            <span class="shift-bar__label">Window: <strong id="shiftLabel">Rolling 12 Hours</strong></span>
+            <div class="shift-bar__btns">
+                <button class="shift-btn shift-btn--active" data-shift="12">Rolling 12h</button>
+                <button class="shift-btn" data-shift="5">05:00 AM</button>
+                <button class="shift-btn" data-shift="15">03:00 PM</button>
+            </div>
+        </div>
+
+        <!-- Live Asset Table -->
+        <div class="table-wrap">
+            <table class="data-table" id="liveTable">
+                <thead>
+                    <tr>
+                        <th class="th--left">Asset</th>
+                        <th class="th--left">Current State</th>
+                        <th>Moves</th>
+                        <th>Last Seen</th>
+                        <th>Fuel / DEF</th>
+                        <th>Engine Hours</th>
+                    </tr>
+                </thead>
+                <tbody id="liveBody"></tbody>
+            </table>
+        </div>
+
+        <!-- Five-State Legend -->
+        <div class="legend" id="liveLegend"></div>
+
+        <!-- Business Logic Footer -->
+        <div class="logic-footer">
+            <span><strong>Completed Move:</strong> Jaw:1 + Spd &gt; 2 mph</span>
+            <span><strong class="text-amber">Check Sensor:</strong> Ign &gt;2h · 10mph×5 · Jaw=0</span>
+            <span><strong class="text-red">Offline:</strong> 7+ days no heartbeat</span>
+        </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         TAB 2: HISTORICAL AUDIT
+         ═══════════════════════════════════════════════════════════ -->
+    <section id="viewAudit" class="view view--hidden">
+
+        <!-- Fleet summary sub-view -->
+        <div id="auditFleet">
+            <!-- KPI Cards -->
+            <div class="kpi-row" id="kpiCards"></div>
+
+            <div class="audit-meta" id="auditMeta"></div>
+
+            <!-- Fleet Table -->
+            <div class="table-wrap">
+                <table class="data-table" id="auditTable">
+                    <thead>
+                        <tr>
+                            <th class="th--left">Truck</th>
+                            <th>Avg GPH</th>
+                            <th>Waste Fuel</th>
+                            <th>Idle %</th>
+                            <th>Moves</th>
+                            <th>Max Spd</th>
+                            <th>Eng Hrs</th>
+                            <th>Fuel</th>
+                        </tr>
+                    </thead>
+                    <tbody id="auditBody"></tbody>
+                </table>
+            </div>
+
+            <!-- Legend -->
+            <div class="legend" id="auditLegend"></div>
+        </div>
+
+        <!-- Daily drill-down sub-view -->
+        <div id="auditDrill" class="drill drill--hidden">
+            <button class="drill__back" id="drillBack">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="#1d4ed8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Fleet Summary
+            </button>
+
+            <!-- Day Selector -->
+            <div class="day-bar" id="dayBar"></div>
+
+            <!-- Drill Content -->
+            <div class="drill__card" id="drillCard">
+                <div class="drill__header">
+                    <div class="drill__truck" id="drillTruckName"></div>
+                    <div class="drill__date" id="drillDate"></div>
+                </div>
+                <div class="drill__kpis" id="drillKpis"></div>
+
+                <!-- Time axis labels -->
+                <div class="ribbon__axis" id="ribbonAxis"></div>
+                <!-- Activity Ribbon -->
+                <div class="ribbon" id="ribbon"></div>
+
+                <!-- Slot selector -->
+                <div class="slot-bar" id="slotBar"></div>
+                <!-- Slot detail panel -->
+                <div class="slot-detail" id="slotDetail"></div>
+
+                <!-- Fallback banner (hidden by default) -->
+                <div class="fallback-banner fallback-banner--hidden" id="fallbackBanner">
+                    <span class="fallback-banner__dot"></span>
+                    <span><strong>JAW SENSOR Unavailable</strong> — RPM Only fallback. Five-state breakdown requires jaw proximity data. Engine Hours and Fuel remain valid.</span>
+                </div>
+
+                <!-- Drill legend -->
+                <div class="legend" id="drillLegend"></div>
+            </div>
+        </div>
+    </section>
+
+    <script src="main.js"></script>
+</body>
+</html>
