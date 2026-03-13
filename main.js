@@ -52,8 +52,10 @@
     // ══════════════════════════════════════════════════════════
 
     var geotabApi    = null;   // set on initialize
-    var cachedDevices = [];    // Device objects from API
+    var geotabState  = null;   // Geotab state object (group filter, etc.)
+    var cachedDevices = [];    // Device objects from API (filtered by group)
     var sensorMap    = {};     // deviceId → true/false (has jaw sensor)
+    var lastSeenMap  = {};     // deviceId → Date (from DeviceStatusInfo)
     var fleetCache   = null;   // cached fleet summary
     var dayCache     = {};     // 'deviceId-dayIdx' → day data
 
@@ -243,9 +245,54 @@
     //  INITIALIZATION: Load devices + detect sensors
     // ══════════════════════════════════════════════════════════
 
-    async function loadDevices(api) {
-        cachedDevices = await api.call('Get', { typeName: 'Device' });
+    async function loadDevices(api, state) {
+        // Get selected group(s) from Geotab's group filter dropdown
+        var groupFilter = [];
+        try {
+            groupFilter = state.getGroupFilter();
+        } catch (e) {
+            console.warn('getGroupFilter not available:', e);
+        }
+
+        // Build device search — if groups are selected, filter by them
+        var deviceSearch = { typeName: 'Device' };
+        if (groupFilter && groupFilter.length > 0) {
+            deviceSearch.search = {
+                groups: groupFilter.map(function (g) { return { id: g.id || g }; })
+            };
+        }
+
+        cachedDevices = await api.call('Get', deviceSearch);
+        console.log('Loaded ' + cachedDevices.length + ' devices' +
+            (groupFilter.length ? ' (filtered by ' + groupFilter.length + ' group(s))' : ' (no group filter)'));
         if (!cachedDevices.length) return;
+
+        // Fetch DeviceStatusInfo for real lastCommunicateDate
+        // This is the ONLY reliable source for "last seen" — the Device object does NOT have it
+        try {
+            var statusInfos = await api.call('Get', { typeName: 'DeviceStatusInfo' });
+            var statusMap = {};
+            statusInfos.forEach(function (si) {
+                statusMap[si.device ? si.device.id : ''] = si;
+            });
+            cachedDevices.forEach(function (d) {
+                var si = statusMap[d.id];
+                if (si && si.dateTime) {
+                    lastSeenMap[d.id] = new Date(si.dateTime);
+                } else if (si && si.lastCommunicateDate) {
+                    lastSeenMap[d.id] = new Date(si.lastCommunicateDate);
+                } else {
+                    lastSeenMap[d.id] = null;
+                }
+            });
+            console.log('DeviceStatusInfo loaded for ' + Object.keys(lastSeenMap).length + ' devices');
+        } catch (e) {
+            console.warn('DeviceStatusInfo fetch failed, falling back:', e);
+            // Fallback: try reading from device object properties
+            cachedDevices.forEach(function (d) {
+                lastSeenMap[d.id] = d.lastCommunicateDate ? new Date(d.lastCommunicateDate) : null;
+            });
+        }
 
         // Detect jaw sensors: check for ANY Aux1 data in last 7 days
         var now = new Date().toISOString();
@@ -263,39 +310,42 @@
     //  LEAF GROUP RESOLVER
     // ══════════════════════════════════════════════════════════
 
-    async function resolveLeafGroup(api) {
+    async function resolveLeafGroup(api, state) {
         try {
-            var groups = await api.call('Get', { typeName: 'Group' });
-            if (!groups.length || !cachedDevices.length) return 'Fleet';
+            // Read the user's selected group(s) from Geotab's group filter
+            var groupFilter = [];
+            try { groupFilter = state.getGroupFilter(); } catch (e) { /* no-op */ }
 
+            if (!groupFilter || !groupFilter.length) return 'Fleet';
+
+            // Fetch group details to get the display name
+            var groups = await api.call('Get', { typeName: 'Group' });
             var groupMap = {};
             groups.forEach(function (g) { groupMap[g.id] = g; });
 
-            // Collect groups from all devices, count membership
-            var groupCount = {};
-            cachedDevices.forEach(function (d) {
-                (d.groups || []).forEach(function (g) {
-                    groupCount[g.id] = (groupCount[g.id] || 0) + 1;
-                });
-            });
-
-            // Find the deepest group with device membership
-            var best = null;
+            // Use the first selected group's name (the one the user picked in the dropdown)
+            // Walk from the selected group(s) to find the most specific (deepest) one
+            var bestName = 'Fleet';
             var bestDepth = -1;
-            Object.keys(groupCount).forEach(function (gid) {
+            groupFilter.forEach(function (gf) {
+                var gid = gf.id || gf;
+                var g = groupMap[gid];
+                if (!g) return;
+
+                // Calculate depth
                 var depth = 0;
-                var cur = groupMap[gid];
-                while (cur && cur.parent && cur.parent.id !== 'GroupCompanyId' && groupMap[cur.parent.id]) {
+                var cur = g;
+                while (cur && cur.parent && groupMap[cur.parent.id]) {
                     depth++;
                     cur = groupMap[cur.parent.id];
                 }
                 if (depth > bestDepth) {
                     bestDepth = depth;
-                    best = groupMap[gid];
+                    bestName = g.name;
                 }
             });
 
-            return best ? best.name : 'Fleet';
+            return bestName;
         } catch (e) {
             console.warn('Leaf group resolution failed:', e);
             return 'Fleet';
@@ -312,15 +362,15 @@
         var fromISO = shiftFrom(shiftHrs);
         var rows = [];
 
-        // Separate offline vs online devices
+        // Separate offline vs online devices using DeviceStatusInfo dates
         var onlineDevices = [];
         cachedDevices.forEach(function (d) {
-            var lastSeen = new Date(d.lastCommunicateDate || d.lastServerCommunicationDate || 0);
-            var daysOff = (now - lastSeen) / 864e5;
+            var lastSeen = lastSeenMap[d.id] || null;
+            var daysOff = lastSeen ? (now - lastSeen) / 864e5 : 999;
             if (daysOff > 7) {
                 rows.push({
                     truck: { id: d.id, name: d.name, sensorOk: !!sensorMap[d.id] },
-                    stateKey: 'OFF', moves: '--', lastSeen: lastSeen,
+                    stateKey: 'OFF', moves: '--', lastSeen: lastSeen || new Date(0),
                     fuelPct: '--', defPct: '--', engineHrs: '--',
                     isOffline: true, checkSensor: false
                 });
@@ -339,7 +389,7 @@
             calls.push(sdSearch(d.id, DIAG.RPM,         fromISO, nowISO));       // 2: RPM (full window)
             calls.push(sdSearch(d.id, DIAG.FUEL_LEVEL,  fromISO, nowISO));       // 3: fuel level
             calls.push(sdSearch(d.id, DIAG.DEF_LEVEL,   fromISO, nowISO));       // 4: DEF level
-            calls.push(sdSearch(d.id, DIAG.ENGINE_HOURS, fromISO, nowISO, 1));   // 5: engine hours (latest)
+            calls.push(sdSearch(d.id, DIAG.ENGINE_HOURS, fromISO, nowISO));        // 5: engine hours
         });
 
         var results = await multi(api, calls);
@@ -355,7 +405,7 @@
             var engData   = results[base + 5] || [];
 
             var hasSensor = sensorMap[d.id];
-            var lastSeen = new Date(d.lastCommunicateDate || d.lastServerCommunicationDate || 0);
+            var lastSeen = lastSeenMap[d.id] || new Date();
 
             // ── Current state ──
             var latestRpm   = last(rpmData)   ? rpmData[rpmData.length - 1].data : 0;
@@ -1056,18 +1106,19 @@
         return {
             initialize: async function (freshApi, freshState, callback) {
                 geotabApi = freshApi;
+                geotabState = freshState;
                 initTooltip();
 
-                // Load devices + detect sensors
+                // Load devices filtered by the user's selected group
                 try {
-                    await loadDevices(freshApi);
+                    await loadDevices(freshApi, freshState);
                 } catch (e) {
                     console.error('Device load failed:', e);
                 }
 
-                // Resolve leaf group for header
+                // Resolve group name for header from the selected group filter
                 try {
-                    var leafName = await resolveLeafGroup(freshApi);
+                    var leafName = await resolveLeafGroup(freshApi, freshState);
                     document.getElementById('leafGroupName').textContent = leafName;
                 } catch (e) {
                     document.getElementById('leafGroupName').textContent = 'Fleet';
@@ -1092,8 +1143,23 @@
                 callback();
             },
 
-            focus: function (freshApi) {
+            focus: async function (freshApi, freshState) {
                 geotabApi = freshApi;
+                geotabState = freshState;
+
+                // Reload devices in case the user changed the group filter
+                try {
+                    await loadDevices(freshApi, freshState);
+                    var leafName = await resolveLeafGroup(freshApi, freshState);
+                    document.getElementById('leafGroupName').textContent = leafName;
+                } catch (e) {
+                    console.warn('Focus reload error:', e);
+                }
+
+                // Clear caches so audit view re-fetches for the new group
+                fleetCache = null;
+                dayCache = {};
+
                 if (activeTab === 'live') renderLive();
                 else showAuditView();
             },
